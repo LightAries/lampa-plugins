@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '03.11.2026';
+  var VERSION = '01_03.11.2026';
   var COMP = 'aniliberty';
   var online_loading = false;
 
