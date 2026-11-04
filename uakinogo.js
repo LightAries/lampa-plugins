@@ -1,11 +1,11 @@
-// Uakinogo online — плагін для Lampa (виправлена версія)
+// Uakinogo online — плагін для Lampa
 (function () {
   'use strict';
 
   if (window.plugin_uakinogo_ready) return;
   window.plugin_uakinogo_ready = true;
 
-  var VERSION = '04.11.2026.2';
+  var VERSION = '04.11.2026.3';
   var COMP = 'uakinogo';
   var DEBUG = true; // true — виводити логи в консоль (префікс UAKINO)
 
@@ -39,6 +39,10 @@
         if (s && res.indexOf(s) === -1) res.push(s);
       });
       return res;
+    },
+    // URL пошуку сайту: /search/<запит>
+    searchUrl: function (q) {
+      return this.host() + '/search/' + encodeURIComponent(q);
     },
     // абсолютний URL з відносного / протокол-відносного
     abs: function (url) {
@@ -88,7 +92,7 @@
     }
   };
 
-  var CARD_SELECTORS = '.movie-item, .shortstory, .short-item, .th-item, article';
+  var CARD_SELECTORS = '.shortStory, .shortstory, .movie-item, .short-item, .th-item, article';
 
   function uakinogo_source(component, _object) {
     var network = new Lampa.Reguest();
@@ -113,48 +117,48 @@
     }
 
     this.search = function (_object) {
-  object = _object;
-  var movie = object.movie || {};
-  select_title = object.search || movie.title || movie.name || '';
+      object = _object;
+      var movie = object.movie || {};
+      select_title = object.search || movie.title || movie.name || '';
 
-  var full = object.clarification ? [object.search] : Utils.unique([
-    object.search, object.search_one, object.search_two,
-    movie.title, movie.name, movie.original_title, movie.original_name
-  ]);
+      var full = object.clarification ? [object.search] : Utils.unique([
+        object.search, object.search_one, object.search_two,
+        movie.title, movie.name, movie.original_title, movie.original_name
+      ]);
 
-  // запасні варіанти: назва до двокрапки ("Человек-паук: ..." -> "Человек-паук")
-  var short = [];
-  if (!object.clarification) {
-    full.forEach(function (q) {
-      var s = q.split(':')[0].trim();
-      if (s && s !== q) short.push(s);
-    });
-  }
-  var queries = Utils.unique(full.concat(short));
-  log('queries', queries);
+      // запасні варіанти: назва до двокрапки ("Человек-паук: ..." -> "Человек-паук")
+      var short = [];
+      if (!object.clarification) {
+        full.forEach(function (q) {
+          var s = (q + '').split(':')[0].trim();
+          if (s && s !== q) short.push(s);
+        });
+      }
 
-  function runQuery(i) {
-    if (destroyed) return;
-    if (i >= queries.length) return component.emptyForQuery(select_title);
+      var queries = Utils.unique(full.concat(short));
+      log('queries', queries);
 
-    var q = (queries[i] || '').replace(/\s+/g, ' ').trim();
-    var url = Utils.searchUrl(q);
-    log('search', i, url);
+      function runQuery(i) {
+        if (destroyed) return;
+        if (i >= queries.length) return component.emptyForQuery(select_title);
 
-    request(url, function (html) {
-      var a = el.is('a') ? el : el.find('.hTitle a[href*=".html"]').first();
-if (!a.length) a = el.find('a[href*=".html"]').first();
-if (!a.length) a = el.find('a[href]').first();
-      log('html len', (html || '').length, 'found', list.length);
-      if (list.length) showResults(list);
-      else runQuery(i + 1);
-    }, function () {
-      runQuery(i + 1);
-    });
-  }
+        var q = (queries[i] || '').replace(/\s+/g, ' ').trim();
+        var url = Utils.searchUrl(q);
+        log('search', i, url);
 
-  runQuery(0);
-};
+        request(url, function (html) {
+          var list = parseSearch(html);
+          log('html len', (html || '').length, 'found', list.length);
+
+          if (list.length) showResults(list);
+          else runQuery(i + 1);
+        }, function () {
+          runQuery(i + 1);
+        });
+      }
+
+      runQuery(0);
+    };
 
     function parseSearch(html) {
       var dom = Utils.parseHtml(html);
@@ -177,12 +181,12 @@ if (!a.length) a = el.find('a[href]').first();
 
       items.each(function () {
         var el = $(this);
-        var a = el.is('a') ? el : el.find('a[href*=".html"]').first();
+        var a = el.is('a') ? el : el.find('.hTitle a[href*=".html"]').first();
+        if (!a.length) a = el.find('a[href*=".html"]').first();
         if (!a.length) a = el.find('a[href]').first();
 
         var href = a.attr('href');
-        var title_el = el.find('.movie-title, .title, h2, h3').first();
-        var title = (title_el.length ? title_el.text() : (a.attr('title') || a.text())) + '';
+        var title = (a.attr('title') || a.text() || '') + '';
         title = title.replace(/\s+/g, ' ').trim().slice(0, 120);
 
         if (!href || href.charAt(0) === '#' || title.length < 2) return;
@@ -196,19 +200,20 @@ if (!a.length) a = el.find('a[href]').first();
     }
 
     function showResults(list) {
-  results = list;
-  var movie = object.movie || {};
-  var year = ((movie.release_date || movie.first_air_date || '') + '').slice(0, 4);
-  var pick = list[0];
+      results = list;
+      var movie = object.movie || {};
+      var year = ((movie.release_date || movie.first_air_date || '') + '').slice(0, 4);
+      var pick = list[0];
 
-  if (year) {
-    var byYear = list.filter(function (r) { return r.title.indexOf('(' + year + ')') !== -1; });
-    if (byYear.length) pick = byYear[0];
-  }
+      // якщо серед результатів є назва з роком фільму — беремо її, інакше перший результат
+      if (year) {
+        var byYear = list.filter(function (r) { return r.title.indexOf('(' + year + ')') !== -1; });
+        if (byYear.length) pick = byYear[0];
+      }
 
-  log('pick', pick.title, pick.url);
-  loadMedia(pick.url);
-}
+      log('pick', pick.title, pick.url);
+      loadMedia(pick.url);
+    }
 
     function loadMedia(url) {
       component.activity.loader(true);
