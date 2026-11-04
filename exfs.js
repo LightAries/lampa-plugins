@@ -5,7 +5,7 @@
   if (window.plugin_exfs_ready) return;
   window.plugin_exfs_ready = true;
 
-  var VERSION = '04.11.2026.1';
+  var VERSION = '04.11.2026.2';
   var COMP = 'exfs';
   var DEBUG = true; // true — логи в консоль (префікс EXFS)
 
