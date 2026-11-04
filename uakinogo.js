@@ -113,38 +113,48 @@
     }
 
     this.search = function (_object) {
-      object = _object;
-      var movie = object.movie || {};
-      select_title = object.search || movie.title || movie.name || '';
+  object = _object;
+  var movie = object.movie || {};
+  select_title = object.search || movie.title || movie.name || '';
 
-      var queries = object.clarification ? [object.search] : Utils.unique([
-        object.search, object.search_one, object.search_two,
-        movie.title, movie.name, movie.original_title, movie.original_name
-      ]);
+  var full = object.clarification ? [object.search] : Utils.unique([
+    object.search, object.search_one, object.search_two,
+    movie.title, movie.name, movie.original_title, movie.original_name
+  ]);
 
-      log('queries', queries);
+  // запасні варіанти: назва до двокрапки ("Человек-паук: ..." -> "Человек-паук")
+  var short = [];
+  if (!object.clarification) {
+    full.forEach(function (q) {
+      var s = q.split(':')[0].trim();
+      if (s && s !== q) short.push(s);
+    });
+  }
+  var queries = Utils.unique(full.concat(short));
+  log('queries', queries);
 
-      function runQuery(i) {
-        if (destroyed) return;
-        if (i >= queries.length) return component.emptyForQuery(select_title);
+  function runQuery(i) {
+    if (destroyed) return;
+    if (i >= queries.length) return component.emptyForQuery(select_title);
 
-        var clean_query = (queries[i] || '').replace(/[\:\-\!\?]/g, ' ').replace(/\s+/g, ' ').trim();
-        var search_url = Utils.host() + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(clean_query);
-        log('search', i, search_url);
+    var q = (queries[i] || '').replace(/\s+/g, ' ').trim();
+    var url = Utils.searchUrl(q);
+    log('search', i, url);
 
-        request(search_url, function (html) {
-          var list = parseSearch(html);
-          log('html len', (html || '').length, 'found', list.length);
+    request(url, function (html) {
+      var a = el.is('a') ? el : el.find('.hTitle a[href*=".html"]').first();
+if (!a.length) a = el.find('a[href*=".html"]').first();
+if (!a.length) a = el.find('a[href]').first();
+      log('html len', (html || '').length, 'found', list.length);
+      if (list.length) showResults(list);
+      else runQuery(i + 1);
+    }, function () {
+      runQuery(i + 1);
+    });
+  }
 
-          if (list.length) showResults(list);
-          else runQuery(i + 1);
-        }, function () {
-          runQuery(i + 1);
-        });
-      }
-
-      runQuery(0);
-    };
+  runQuery(0);
+};
 
     function parseSearch(html) {
       var dom = Utils.parseHtml(html);
@@ -186,14 +196,19 @@
     }
 
     function showResults(list) {
-      results = list;
-      if (list.length === 1) {
-        loadMedia(list[0].url);
-      } else {
-        component.loading(false);
-        appendResults();
-      }
-    }
+  results = list;
+  var movie = object.movie || {};
+  var year = ((movie.release_date || movie.first_air_date || '') + '').slice(0, 4);
+  var pick = list[0];
+
+  if (year) {
+    var byYear = list.filter(function (r) { return r.title.indexOf('(' + year + ')') !== -1; });
+    if (byYear.length) pick = byYear[0];
+  }
+
+  log('pick', pick.title, pick.url);
+  loadMedia(pick.url);
+}
 
     function loadMedia(url) {
       component.activity.loader(true);
