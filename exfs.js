@@ -72,7 +72,7 @@
     },
     // витягує потоки: [1080p]url,[720p]url / одиночний m3u8 / file:"url"
     extractStreams: function (str) {
-      str = ((str || '') + '').replace(/\\\//g, '/').replace(/\\u0026/g, '&');
+      str = ((str || '') + '').replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
       var map = {}, order = [], m;
       var re = /\[([^\]]+)\]\s*(https?:\/\/[^\s,"'\\\[\]]+\.m3u8[^\s,"'\\\[\]]*)/gi;
 
@@ -81,23 +81,11 @@
       }
 
       if (!order.length) {
-        var plain = str.match(/https?:\/\/[^\s,"'\\\[\]]+\.m3u8[^\s,"'\\\[\]]*/i);
-        if (plain) { map['Auto'] = plain[0]; order.push('Auto'); }
-      }
-
-      if (!order.length) {
-        var f = str.match(/file\s*:\s*["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
-        if (f) { map['Auto'] = f[1]; order.push('Auto'); }
-      }
-
-      if (!order.length) return null;
-
-      order.sort(function (a, b) { return (parseInt(b, 10) || 0) - (parseInt(a, 10) || 0); });
-      var sorted = {};
-      order.forEach(function (k) { sorted[k] = map[k]; });
-
-      return { url: sorted[order[0]], quality: sorted, label: order[0] };
-    }
+  var all = str.match(/https?:\/\/[^\s,"'\\\[\]<>]+\.m3u8[^\s,"'\\\[\]<>]*/gi) || [];
+  log('m3u8 candidates', all);
+  var good = all.filter(function (u) { return u.indexOf('/x-px') === -1; });
+  if (good.length) { map['Auto'] = good[0]; order.push('Auto'); }
+}
   };
 
   // порядок спроб плеєрів (за підрядком у URL); трейлери пропускаємо
