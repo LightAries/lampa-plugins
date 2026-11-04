@@ -70,7 +70,7 @@
         return $('<div></div>');
       }
     },
-    // витягує потоки: [1080p]url,[720p]url / одиночний m3u8 / file:"url"
+        // витягує потоки: [1080p]url,[720p]url / одиночний m3u8 / file:"url"
     extractStreams: function (str) {
       str = ((str || '') + '').replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
       var map = {}, order = [], m;
@@ -81,11 +81,25 @@
       }
 
       if (!order.length) {
-  var all = str.match(/https?:\/\/[^\s,"'\\\[\]<>]+\.m3u8[^\s,"'\\\[\]<>]*/gi) || [];
-  log('m3u8 candidates', all);
-  var good = all.filter(function (u) { return u.indexOf('/x-px') === -1; });
-  if (good.length) { map['Auto'] = good[0]; order.push('Auto'); }
-}
+        var all = str.match(/https?:\/\/[^\s,"'\\\[\]<>]+\.m3u8[^\s,"'\\\[\]<>]*/gi) || [];
+        log('m3u8 candidates', all);
+        var good = all.filter(function (u) { return u.indexOf('/x-px') === -1; });
+        if (good.length) { map['Auto'] = good[0]; order.push('Auto'); }
+      }
+
+      if (!order.length) return null;
+
+      // найвища якість першою (1080p > 720p > ...)
+      order.sort(function (a, b) {
+        return (parseInt(b, 10) || 0) - (parseInt(a, 10) || 0);
+      });
+
+      return {
+        url: map[order[0]],
+        label: order[0],
+        quality: map
+      };
+    }
   };
 
   // порядок спроб плеєрів (за підрядком у URL); трейлери пропускаємо
