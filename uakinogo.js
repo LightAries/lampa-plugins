@@ -11,7 +11,6 @@
             select_title = object.search || object.movie.title;
             
             var clean_title = select_title.replace(/[\:\-\!\?]/g, ' ').trim();
-            // Запит на пошук у DLE сторінці uakinogo.io
             var search_url = Lampa.Utils.proxy('https://uakinogo.io/index.php?do=search&subaction=search&story=' + encodeURIComponent(clean_title));
 
             network.clear();
@@ -64,12 +63,11 @@
 
         function parseIframe(html) {
             var dom = $(html);
-            // Шукаємо iframe з cinemar або плеєром
             var iframe = dom.find('iframe.player-container, iframe[src*="cinemar"], iframe[data-src*="cinemar"]').first();
             var iframe_src = iframe.attr('src') || iframe.attr('data-src');
 
             if (!iframe_src) {
-                var match = html.match(/(https?: \/\/[^"']*(?:cinemar|cinemap)[^"']*)/i);
+                var match = html.match(/(https?:\/\/[^"']*(?:cinemar|cinemap)[^"']*)/i);
                 if (match) iframe_src = match[1];
             }
 
@@ -84,13 +82,11 @@
         }
 
         function loadCinemarStream(iframe_url) {
-            // Проксуємо запит до iframe cinemar, щоб пройти CORS та отримати токени/код
             var proxied_url = Lampa.Utils.proxy(iframe_url);
 
             network.clear();
             network.timeout(10000);
             network.native(proxied_url, function (str) {
-                // 1. Пошук прямого .m3u8 посилання всередині iframe/скриптів
                 var m3u8_match = str.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/i);
 
                 if (m3u8_match) {
@@ -101,7 +97,6 @@
                         quality: 'Auto HLS'
                     }]);
                 } else {
-                    // 2. Пошук файлу конфігу Playerjs або зашифрованого джерела
                     var file_match = str.match(/file\s*:\s*["']([^"']+)["']/i);
                     if (file_match) {
                         buildPlaylist([{
@@ -136,4 +131,62 @@
 
                     Lampa.Player.play({
                         title: object.movie.title,
-                        url: element.
+                        url: element.file,
+                        playlist: playlist
+                    });
+                });
+
+                list.push(item);
+            });
+
+            component.append(list);
+        }
+
+        this.reset = function () {
+            component.reset();
+        };
+
+        this.destroy = function () {
+            network.clear();
+        };
+    }
+
+    function initPlugin() {
+        if (window.uakinogo_plugin_loaded) return;
+        window.uakinogo_plugin_loaded = true;
+
+        // Реєстрація компонента в Lampa
+        if (window.Lampa && Lampa.Component) {
+            Lampa.Component.add('uakinogo', Uakinogo);
+        }
+
+        // Реєстрація в онлайн-модулі, щоб він з'явився у виборі балансерів
+        if (window.Lampa && Lampa.Manifest) {
+            Lampa.Manifest.plugins = Lampa.Manifest.plugins || [];
+        }
+
+        // Додавання налаштування та активації джерела
+        if (window.Lampa && Lampa.SettingsApi) {
+            Lampa.SettingsApi.addParam({
+                component: 'online',
+                param: {
+                    name: 'uakinogo_enabled',
+                    type: 'trigger',
+                    default: true
+                },
+                field: {
+                    name: 'Uakinogo.io',
+                    description: 'Перегляд через Uakinogo (Cinemar)'
+                }
+            });
+        }
+    }
+
+    if (window.appready) {
+        initPlugin();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') initPlugin();
+        });
+    }
+})();
