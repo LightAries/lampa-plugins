@@ -70,35 +70,37 @@
         return $('<div></div>');
       }
     },
-        // витягує потоки: [1080p]url,[720p]url / одиночний m3u8 / file:"url"
-    extractStreams: function (str) {
+    // чи схожий URL на рекламний
+    isAd: function (u) {
+      return /\/x-px|[\/_.\-](ads?|adv|vast|preroll|promo|banner)[\/_.\-]/i.test(u);
+    },
+    // відносний шлях → абсолютний відносно URL плейлиста
+    resolve: function (url, base) {
+      url = (url || '') + '';
+      if (/^https?:\/\//i.test(url)) return url;
+      if (url.indexOf('//') === 0) return 'https:' + url;
+      if (url.charAt(0) === '/') return this.origin(base) + url;
+      return base.replace(/[?#].*$/, '').replace(/[^\/]*$/, '') + url;
+    },
+    // всі m3u8-кандидати: чисті першими, interkh.com пріоритетніше
+    extractCandidates: function (str) {
       str = ((str || '') + '').replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
-      var map = {}, order = [], m;
-      var re = /\[([^\]]+)\]\s*(https?:\/\/[^\s,"'\\\[\]]+\.m3u8[^\s,"'\\\[\]]*)/gi;
+      var list = [], seen = {}, m, self = this;
+      var re = /(?:\[([^\]]+)\]\s*)?(https?:\/\/[^\s,"'\\\[\]<>]+\.m3u8[^\s,"'\\\[\]<>]*)/gi;
 
       while ((m = re.exec(str))) {
-        if (!map[m[1]]) { map[m[1]] = m[2]; order.push(m[1]); }
+        if (seen[m[2]]) continue;
+        seen[m[2]] = true;
+        list.push({ label: m[1] || 'Auto', url: m[2] });
       }
 
-      if (!order.length) {
-        var all = str.match(/https?:\/\/[^\s,"'\\\[\]<>]+\.m3u8[^\s,"'\\\[\]<>]*/gi) || [];
-        log('m3u8 candidates', all);
-        var good = all.filter(function (u) { return u.indexOf('/x-px') === -1; });
-        if (good.length) { map['Auto'] = good[0]; order.push('Auto'); }
-      }
-
-      if (!order.length) return null;
-
-      // найвища якість першою (1080p > 720p > ...)
-      order.sort(function (a, b) {
-        return (parseInt(b, 10) || 0) - (parseInt(a, 10) || 0);
+      list.forEach(function (c) {
+        c.rank = (self.isAd(c.url) ? 10 : 0) + (c.url.indexOf('interkh.com') !== -1 ? 0 : 1);
       });
-
-      return {
-        url: map[order[0]],
-        label: order[0],
-        quality: map
-      };
+      list.sort(function (a, b) {
+        return (a.rank - b.rank) || ((parseInt(b.label, 10) || 0) - (parseInt(a.label, 10) || 0));
+      });
+      return list;
     }
   };
 
@@ -321,45 +323,93 @@
     function tryPlayer(players, i, page_url) {
       if (destroyed) return;
       if (i >= players.length) {
-        return component.empty('Потоки не знайдено ни в одному плеєрі (дивись консоль: EXFS)');
+        return component.empty('Потоки не знайдено в жодному плеєрі (дивись консоль: EXFS)');
       }
 
       var p = players[i];
       log('try player', i, p.name, p.url);
 
-      fetchStream(p.url, Utils.host() + '/', 0, function (found) {
-        if (!found) return tryPlayer(players, i + 1, page_url);
+      fetchCandidates(p.url, Utils.host() + '/', 0, function (cands) {
+        if (!cands.length) return tryPlayer(players, i + 1, page_url);
 
-        var movie = object.movie || {};
-        var episodes = [{
-          title: movie.title || movie.name || select_title,
-          file: found.url,
-          qualities: found.quality,
-          quality: p.name + ' · ' + found.label + ' · ' + found.url.slice(0, 110),
-          season: 1,
-          episode: 1
-        }];
+        pickReal(cands, p.url, 0, function (found) {
+          if (!found) return tryPlayer(players, i + 1, page_url);
 
-        component.loading(false);
-        append(episodes);
+          var movie = object.movie || {};
+          var episodes = [{
+            title: movie.title || movie.name || select_title,
+            file: found.url,
+            qualities: found.quality,
+            quality: p.name + ' · ' + found.label + ' · ' + found.info,
+            season: 1,
+            episode: 1
+          }];
+
+          component.loading(false);
+          append(episodes);
+        });
       });
     }
 
-    // запитує iframe; якщо потоку немає — один раз заходить у вкладений iframe
-    function fetchStream(url, referer, depth, cb) {
+    // збирає m3u8-кандидатів з iframe (за потреби — з вкладеного)
+    function fetchCandidates(url, referer, depth, cb) {
       request(url, function (str) {
-        var found = Utils.extractStreams(str);
-        log('iframe', depth, url, 'len', (str || '').length, 'stream', found && found.url);
+        var list = Utils.extractCandidates(str);
+        log('iframe', depth, url, 'len', (str || '').length, 'candidates', list.length);
 
-        if (found) return cb(found);
+        if (list.length) return cb(list);
 
         if (depth < 1) {
           var m = (str || '').match(/<iframe[^>]+src=["']([^"']+)["']/i);
-          if (m) return fetchStream(Utils.abs(m[1], url), url, depth + 1, cb);
+          if (m) return fetchCandidates(Utils.abs(m[1], url), url, depth + 1, cb);
         }
 
         log('iframe head', (str || '').slice(0, 800));
-        cb(null);
+        cb([]);
+      }, function () {
+        cb([]);
+      }, { 'Referer': referer });
+    }
+
+    // перевіряє кандидатів по черзі, відкидає рекламні ролики за тривалістю
+    function pickReal(cands, referer, k, cb) {
+      if (destroyed) return;
+      if (k >= cands.length) return cb(null);
+
+      var c = cands[k];
+      var movie = object.movie || {};
+      var runtime = movie.runtime || (movie.episode_run_time && movie.episode_run_time[0]) || 0;
+      var min_sec = runtime ? runtime * 60 * 0.4 : 300;
+
+      probe(c.url, referer, 0, function (dur) {
+        log('probe', c.url, 'duration', dur, 'min', min_sec);
+
+        if (dur === null || dur < min_sec) return pickReal(cands, referer, k + 1, cb);
+
+        var q = {};
+        cands.forEach(function (x) {
+          if (!Utils.isAd(x.url) && !q[x.label]) q[x.label] = x.url;
+        });
+        if (!q[c.label]) q[c.label] = c.url;
+
+        cb({ url: c.url, label: c.label, quality: q, info: Math.round(dur / 60) + ' хв' });
+      });
+    }
+
+    // повертає сумарну тривалість плейлиста в секундах (null — не плейлист/помилка)
+    function probe(url, referer, depth, cb) {
+      request(url, function (txt) {
+        txt = (txt || '') + '';
+        if (txt.indexOf('#EXTM3U') === -1) return cb(null);
+
+        // master-плейлист → беремо перший варіант
+        var v = txt.match(/#EXT-X-STREAM-INF[^\n]*\n\s*([^\s#][^\n]*)/);
+        if (v && depth < 2) return probe(Utils.resolve(v[1].trim(), url), referer, depth + 1, cb);
+
+        var total = 0, m, re = /#EXTINF:([\d.]+)/g;
+        while ((m = re.exec(txt))) total += parseFloat(m[1]) || 0;
+
+        cb(total > 0 ? total : null);
       }, function () {
         cb(null);
       }, { 'Referer': referer });
