@@ -5,7 +5,7 @@
   if (window.plugin_uakinogo_ready) return;
   window.plugin_uakinogo_ready = true;
 
-  var VERSION = '04.11.2026.1';
+  var VERSION = '04.11.2026.2';
   var COMP = 'uakinogo';
   var DEBUG = true; // true — виводити логи в консоль (префікс UAKINO)
 
