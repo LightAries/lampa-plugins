@@ -1,15 +1,11 @@
-// Uakinogo online — плагін для Lampa
-// Структура повторює зразок AniLiberty (initMain -> component -> модуль-джерело -> Player)
+// Uakinogo online — плагін для Lampa (виправлений пошук)
 (function () {
   'use strict';
 
-  var VERSION = '03.11.2026.1';
+  var VERSION = '03.11.2026.2';
   var COMP = 'uakinogo';
   var online_loading = false;
 
-  /* ------------------------------------------------------------------ */
-  /*  Utils                                                             */
-  /* ------------------------------------------------------------------ */
   var Utils = {
     host: function () {
       return Lampa.Storage.get('uakinogo_host', 'https://uakinogo.io') + '';
@@ -36,27 +32,15 @@
     }
   };
 
-  /* ------------------------------------------------------------------ */
-  /*  Джерело: Uakinogo.io / Cinemar                                    */
-  /* ------------------------------------------------------------------ */
   function uakinogo_source(component, _object) {
     var network = new Lampa.Reguest();
     var object = _object;
     var select_title = '';
-    var results = [];      // результати пошуку
-    var episodes = [];     // потоки / епізоди
-    var choices = Lampa.Storage.cache('uakinogo_choice', 200, {});
-    var choice = choices[_object.movie.id] || {};
-
-    function saveChoice() {
-      choices[object.movie.id] = choice;
-      Lampa.Storage.set('uakinogo_choice', choices);
-    }
+    var results = [];
 
     this.search = function (_object) {
       object = _object;
       select_title = object.search || object.movie.title;
-      var error = component.empty.bind(component);
 
       var queries = object.clarification ? [object.search] : Utils.unique([
         object.search, object.search_one, object.search_two,
@@ -82,19 +66,35 @@
 
     function parseSearch(html, queries, i) {
       var dom = $(html);
-      var items = dom.find('.movie-item, .shortstory, article, .item');
       var list = [];
 
+      // Розширений пошук елементів (будь-які картки або посилання на фільми)
+      var items = dom.find('.movie-item, .shortstory, article, .item, .short-item, .th-item');
+      
+      if (items.length === 0) {
+        // Запасний варіант: шукаємо всі посилання у контенті, які ведуть на внутрішні сторінки
+        items = dom.find('.content a, #dle-content a').filter(function() {
+          var href = $(this).attr('href');
+          return href && href.indexOf('.html') !== -1 && $(this).text().trim().length > 3;
+        });
+      }
+
       items.each(function () {
-        var title_el = $(this).find('.movie-title, .title, h2, a').first();
-        var title = title_el.text().trim();
-        var href = $(this).find('a').attr('href');
-        if (href) {
-          list.push({
-            title: title,
-            url: href,
-            id: href
-          });
+        var el = $(this);
+        var title_el = el.find('.movie-title, .title, h2, h3').first();
+        var title = title_el.length ? title_el.text().trim() : el.text().trim();
+        var href = el.is('a') ? el.attr('href') : el.find('a').attr('href');
+
+        if (href && title && title.length > 2) {
+          // Захист від дублікатів
+          var exists = list.some(function(item) { return item.url === href; });
+          if (!exists) {
+            list.push({
+              title: title,
+              url: href,
+              id: href
+            });
+          }
         }
       });
 
@@ -107,25 +107,29 @@
           appendResults();
         }
       } else {
-        nextQuery(queries, i);
+        // Якщо нічого не знайдено за поточним запитом, пробуємо наступний
+        if (i + 1 < queries.length) {
+          nextQuery(queries, i + 1);
+        } else {
+          component.emptyForQuery(select_title);
+        }
       }
     }
 
     function nextQuery(queries, i) {
-      if (i + 1 < queries.length) {
-        // Пробуємо наступний варіант пошукового запиту
-        var clean_query = (queries[i + 1] || '').replace(/[\:\-\!\?]/g, ' ').trim();
-        var search_url = Utils.host() + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(clean_query);
-        network.clear();
-        network.timeout(15000);
-        network[Utils.netMethod()](Utils.proxyUrl(search_url), function (html) {
-          parseSearch(html, queries, i + 1);
-        }, function () {
+      var clean_query = (queries[i] || '').replace(/[\:\-\!\?]/g, ' ').trim();
+      var search_url = Utils.host() + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(clean_query);
+      network.clear();
+      network.timeout(15000);
+      network[Utils.netMethod()](Utils.proxyUrl(search_url), function (html) {
+        parseSearch(html, queries, i);
+      }, function () {
+        if (i + 1 < queries.length) {
+          nextQuery(queries, i + 1);
+        } else {
           component.emptyForQuery(select_title);
-        }, false, { dataType: 'text' });
-      } else {
-        component.emptyForQuery(select_title);
-      }
+        }
+      }, false, { dataType: 'text' });
     }
 
     function loadMedia(url) {
@@ -173,7 +177,7 @@
         }
 
         if (stream_url) {
-          episodes = [{
+          var episodes = [{
             title: object.movie.title,
             file: stream_url,
             quality: 'Auto HLS',
@@ -193,7 +197,6 @@
     this.destroy = function () {
       network.clear();
       results = null;
-      episodes = null;
     };
 
     this.reset = function () {
@@ -276,9 +279,6 @@
     }
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Шаблони, мова, налаштування та інтерфейс компонента                */
-  /* ------------------------------------------------------------------ */
   function resetTemplates() {
     Lampa.Template.add('uakinogo',
       '<div class="online selector"><div class="online__body">' +
@@ -303,12 +303,7 @@
       uakinogo_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Не вдалося отримати посилання', en: 'Failed to get the link' },
       uakinogo_host: { ru: 'Адрес сайта', uk: 'Адреса сайту', en: 'Site host' },
       uakinogo_proxy: { ru: 'Использовать CORS-прокси', uk: 'Використовувати CORS-проксі', en: 'Use CORS proxy' },
-      uakinogo_proxy_url: { ru: 'URL прокси', uk: 'URL проксі', en: 'Proxy URL' },
-      uakinogo_proxy_url_descr: {
-        ru: 'Префикс, к которому добавляется полный URL запроса',
-        uk: 'Префікс, до якого додається повний URL запиту',
-        en: 'Prefix to which the full request URL is appended'
-      }
+      uakinogo_proxy_url: { ru: 'URL прокси', uk: 'URL проксі', en: 'Proxy URL' }
     });
   }
 
@@ -470,7 +465,7 @@
       param: { name: 'uakinogo_proxy_url', type: 'input', values: '', 'default': '' },
       field: {
         name: Lampa.Lang.translate('uakinogo_proxy_url'),
-        description: Lampa.Lang.translate('uakinogo_proxy_url_descr')
+        description: 'Префікс, до якого додається повний URL запиту'
       }
     });
   };
@@ -502,48 +497,3 @@
       version: VERSION,
       name: Lampa.Lang.translate('uakinogo_title') + ' - ' + VERSION,
       description: Lampa.Lang.translate('uakinogo_watch'),
-      component: COMP,
-      onContextMenu: function onContextMenu() {
-        return { name: Lampa.Lang.translate('uakinogo_watch'), description: '' };
-      },
-      onContextLauch: function onContextLauch(object) {
-        online_loading = false;
-        loadOnline(object);
-      }
-    };
-    Lampa.Manifest.plugins = manifest;
-
-    var button = '<div class="full-start__button selector view--uakinogo" data-subtitle="uakinogo ' + VERSION + '">' +
-      '<svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" width="512" height="512">' +
-      '<circle cx="64" cy="64" r="56" stroke="currentColor" stroke-width="12"/>' +
-      '<text x="35" y="78" fill="currentColor" font-size="45" font-weight="bold">UA</text></svg>' +
-      '<span>Uakinogo</span></div>';
-
-    Lampa.Listener.follow('full', function (e) {
-      if (e.type == 'complite') {
-        var render = e.object.activity.render();
-        if (render.find('.view--uakinogo').length) return;
-        var btn = $(button);
-        online_loading = false;
-        btn.on('hover:enter', function () {
-          loadOnline(e.data.movie);
-        });
-        render.find('.view--torrent').after(btn);
-      }
-    });
-  }
-
-  function startPlugin() {
-    if (window.plugin_uakinogo_ready) return;
-    window.plugin_uakinogo_ready = true;
-    initLang();
-    initMain();
-    uakinogo_source.initSettings();
-  }
-
-  if (window.appready) startPlugin(); else {
-    Lampa.Listener.follow('app', function (e) {
-      if (e.type == 'ready') startPlugin();
-    });
-  }
-})();
