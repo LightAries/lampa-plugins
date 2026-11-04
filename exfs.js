@@ -333,7 +333,7 @@
           title: movie.title || movie.name || select_title,
           file: found.url,
           qualities: found.quality,
-          quality: p.name + ' · ' + found.label,
+          quality: p.name + ' · ' + found.label + ' · ' + found.url.slice(0, 110),
           season: 1,
           episode: 1
         }];
